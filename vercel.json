@@ -4,5 +4,15 @@
       "maxDuration": 60,
       "includeFiles": "{templates,static}/**"
     }
-  }
+  },
+  "routes": [
+    { "src": "/locket.conf", "dest": "/static/locket_vip.conf" },
+    { "src": "/download/locket.conf", "dest": "/static/locket_vip.conf" },
+    { "src": "/locket_vip.conf", "dest": "/static/locket_vip.conf" },
+    { "src": "/locket_vip_engine.js", "dest": "/static/locket_vip_engine.js" },
+    { "src": "/download/locket_vip_engine.js", "dest": "/static/locket_vip_engine.js" },
+    { "src": "/download/mobileconfig", "dest": "/app.py" },
+    { "src": "/static/(.*)", "dest": "/static/$1" },
+    { "src": "/(.*)", "dest": "/app.py" }
+  ]
 }
