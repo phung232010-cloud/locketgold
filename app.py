@@ -369,6 +369,8 @@ def register():
             return render_template("dang-ky.html")
 
         session["user_id"] = user.id
+        session["username"] = user.username
+        session["email"] = user.email
         flash("Đăng ký thành công!", "success")
         return redirect(url_for("index"))
 
@@ -389,6 +391,8 @@ def login():
             return render_template("dang-nhap.html")
 
         session["user_id"] = user.id
+        session["username"] = user.username
+        session["email"] = user.email
         flash("Đăng nhập thành công!", "success")
         next_url = request.args.get("next")
         return redirect(next_url or url_for("index"))
@@ -597,22 +601,29 @@ def payos_webhook():
 @csrf_protect
 def api_inject():
     user = get_current_user()
+    if not user:
+        return jsonify({"success": False, "message": "Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại."}), 401
+
     data = request.get_json(silent=True) or {}
     uid = (data.get("uid") or "").strip()
     if not uid:
-        return jsonify({"ok": False, "error": "Thiếu UID."}), 400
+        return jsonify({"success": False, "message": "Thiếu UID."}), 400
 
     # Validate UID
     ok, error = validate_uid(uid)
     if not ok:
-        return jsonify({"ok": False, "error": error}), 400
+        return jsonify({"success": False, "message": error}), 400
 
     # Trừ 1 credit trước
     ok, error = use_credit(user)
     if not ok:
-        return jsonify({"ok": False, "error": error}), 400
+        return jsonify({"success": False, "message": error or "Bạn không đủ lượt kích hoạt."}), 400
 
-    result = asyncio.run(inject_gold(uid, TOKEN_CONFIG))
+    try:
+        result = asyncio.run(inject_gold(uid, TOKEN_CONFIG))
+    except Exception as e:
+        refund_credit(user)
+        return jsonify({"success": False, "message": f"Lỗi hệ thống: {str(e)}"}), 500
 
     if result.get("success"):
         # Ghi nhận gold order
@@ -769,6 +780,41 @@ def api_admin_update_user(user_id):
     return jsonify({"ok": True, "user": user.to_dict()})
 
 
+@app.route("/api/admin/set-credits", methods=["POST"])
+@admin_required
+def api_admin_set_credits():
+    current_u = get_current_user()
+    data = request.get_json(silent=True) or {}
+    target_uname = (data.get("username") or "").strip()
+    credits_val = data.get("credits")
+
+    try:
+        credits_val = int(credits_val)
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Số lượt không hợp lệ."}), 400
+
+    if target_uname:
+        target_user = User.query.filter_by(username=target_uname).first()
+        if not target_user:
+            return jsonify({"ok": False, "error": f"Không tìm thấy người dùng '{target_uname}'."}), 404
+    else:
+        target_user = current_u
+
+    target_user.credits = credits_val
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+    return jsonify({
+        "ok": True,
+        "message": f"Đã cập nhật thành công {credits_val} lượt cho '{target_user.username}'.",
+        "username": target_user.username,
+        "credits": target_user.credits
+    })
+
+
 @app.route("/api/admin/transactions", methods=["GET"])
 @admin_required
 def api_admin_transactions():
@@ -832,6 +878,32 @@ def download_mobileconfig():
         download_name="locketgold_novpn.mobileconfig",
         mimetype="application/x-apple-aspen-config",
     )
+
+
+@app.route("/download/locket.conf")
+@app.route("/locket.conf")
+def download_locket_conf():
+    """Tải file cấu hình Shadowrocket locket.conf tương tự locketmphong.conf
+    nhưng mang thương hiệu riêng và mở khóa Photobooth không giới hạn."""
+    filepath = os.path.join(HERE, "static", "locket_vip.conf")
+    if not os.path.exists(filepath):
+        abort(404)
+    return send_file(
+        filepath,
+        as_attachment=False,
+        download_name="locket_vip.conf",
+        mimetype="text/plain; charset=utf-8",
+    )
+
+
+@app.route("/download/locket_vip_engine.js")
+@app.route("/locket_vip_engine.js")
+def download_locket_engine():
+    """Phục vụ file script engine JS cho Shadowrocket."""
+    filepath = os.path.join(HERE, "static", "locket_vip_engine.js")
+    if not os.path.exists(filepath):
+        abort(404)
+    return send_file(filepath, mimetype="application/javascript; charset=utf-8")
 
 
 if __name__ == "__main__":
